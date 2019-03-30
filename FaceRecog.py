@@ -1,14 +1,17 @@
-from scipy import misc
-import tensorflow as tf
-import numpy as np
+import os
 import sys
-import argparse
-import facenet
-import align.detect_face
+import copy
 import time
 import cv2
+import tensorflow as tf
+import numpy as np
+import argparse
+from scipy import misc
+
+import facenet
+import align.detect_face
 from mtcnn import mtcnn
-import copy
+
 
 def pre_calculate_dis(face_list):
     '''
@@ -31,7 +34,8 @@ def main(args):
     mt = mtcnn(160)
     img_ = img_[:, :, :: -1]  # BGR转换为RGB
     #print(img_)
-    image1 = mt.detectFace(img_)
+    image1, rectangles_ = mt.detectFace(img_)
+    print(rectangles_)
     image1 = prewhiten(image1[0])
     print(image1)
     #assert 0
@@ -55,41 +59,46 @@ def main(args):
             print(image1.shape)
             cnt = 0
             while (1):
+                start1 = int(round(time.time()*1000))  # ms
                 ret, img = cap.read()
                 #cv2.imshow("333", img)
                 #cv2.waitKey(0)
                 img = img[:, :, :: -1]  # BGR转换为RGB
-                image2 = mt.detectFace(img)
+                image2, rectangles = mt.detectFace(img)
+                # 再折腾回来
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 #cv2.imshow("5555", image2)
                 #cv2.waitKey(0)
-                print("^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-                print(image1)
-                print("^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+                #print("^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+                #print(image1)
+                #print("^^^^^^^^^^^^^^^^^^^^^^^^^^^")
                 if len(image1)==0 or len(image2)==0:
                     print("image1 or image2 is empty!")
+                    cv2.imshow("face", img)
+                    cv2.waitKey(10)
                     continue
 
-                image2_ = copy.deepcopy(prewhiten(image2[0]))
-                _image2 = np.expand_dims(image2_, axis=0)
-                print("***"*20)
-                print(type(image1), "image1 shape: ", image1.shape)#.shape, image2.shape)
-                print(type(image2), "image2 shape: ", image2[0].shape)  # .shape, image2.shape)
-                print("***"*20)
-                images = np.concatenate((image1, _image2), axis=0)
-                print("----"*20)
-                print(images.shape)
-                #assert 0
-                # Run forward pass to calculate embeddings
-                feed_dict = {images_placeholder: images, phase_train_placeholder: False}
-                emb = sess.run(embeddings, feed_dict=feed_dict)
-                dist = np.sqrt(np.sum(np.square(np.subtract(emb[0, :], emb[1, :]))))
-                sim = calculSimilar(emb[0, :], emb[1, :])
-                print("相似度: ", sim)
-                print("Distance: ", dist)
-                _img = copy.deepcopy(img[:, :, :: -1])
-                cv2.putText(_img, 'Similar: '+str(sim)[:5], (10, 50), cv2.FONT_HERSHEY_COMPLEX, 2, (0, 255, 0), 2)
-                cv2.imshow("face", _img)
-                cv2.waitKey(10)
+                for i in range(len(image2)):
+                    image2_ = copy.deepcopy(prewhiten(image2[i]))
+                    _image2 = np.expand_dims(image2_, axis=0)
+                    images = np.concatenate((image1, _image2), axis=0)
+                    # Run forward pass to calculate embeddings
+                    feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+                    emb = sess.run(embeddings, feed_dict=feed_dict)
+                    dist = np.sqrt(np.sum(np.square(np.subtract(emb[0, :], emb[1, :]))))
+                    sim = calculSimilar(emb[0, :], emb[1, :])
+                    print("相似度: ", sim)
+                    print("Distance: ", dist)
+                    cv2.rectangle(img, (int(rectangles[i][0]), int(rectangles[i][1])), (int(rectangles[i][2]), int(rectangles[i][3])), (255, 0, 0), 1)
+                    cv2.putText(img, 'Similar: ' + str(sim)[:5], (int(rectangles[i][0]) + 5, int(rectangles[i][1])+ 5), cv2.FONT_HERSHEY_COMPLEX, 2, (0, 255, 0), 2)
+                cv2.imshow("face", img)
+                if cv2.waitKey(10) and 0xFF == ord('q'):
+                    break
+                start2 = int(round(time.time()*1000))
+                print("cost time(ms): ", (start2-start1))
+                print("fps: ", 1000.0/(start2 - start1))
+            cap.release()
+            cv2.destroyAllWindows()
 
 
 
@@ -155,4 +164,5 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 if __name__ == '__main__':
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     main(parse_arguments(sys.argv[1:]))
